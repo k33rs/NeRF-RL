@@ -5,14 +5,14 @@ from torch import nn
 from torch.optim import Adam
 
 from .config import Config
-from .geom import (
+from ..shared.geom import (
     clip_to_angle,
     clip_to_image,
     random_dir,
 )
 from .model import Actor, Critic
-from .memory import SequentialMemory
-from .utils import (
+from ..shared.memory import SequentialMemory
+from ..shared.utils import (
     hard_update,
     soft_update,
     to_tensor,
@@ -83,7 +83,7 @@ class Agent:
             self.imshape,
         )
         return next_dir
-    
+
     def select_action(self, state, decay_eps=True):
         """select next action by policy and clip it"""
         initial_dir = self.initial_state[..., -self.action_dim:]
@@ -114,22 +114,20 @@ class Agent:
         return next_dir
     
     def observe(self, state, action, reward, done):
-        if self.is_training:
-            self.memory.append(
-                to_numpy(state),
-                to_numpy(action),
-                to_numpy(reward),
-                done,
-            )
+        self.memory.append(
+            to_numpy(state),
+            to_numpy(action),
+            to_numpy(reward),
+            done,
+        )
 
     def observe_done(self, state):
-        if self.is_training:
-            self.memory.append(
-                to_numpy(state),
-                to_numpy(self.select_action(state)),
-                np.zeros((self.batch_size, 1)),
-                False,
-            )
+        self.memory.append(
+            to_numpy(state),
+            to_numpy(self.select_action(state)),
+            np.zeros((self.batch_size, 1)),
+            False,
+        )
 
     def forget(self):
         self.memory.reset()
@@ -148,26 +146,19 @@ class Agent:
             action = to_tensor(action_batch[:, i:i+self.chunk_size], self.device)
             next_state = to_tensor(next_state_batch[:, i:i+self.chunk_size], self.device)
             reward = to_tensor(reward_batch[:, i:i+self.chunk_size], self.device)
-
             # Critic update (TD)
             target_action = self.actor_target(next_state)
             next_q_values = self.critic_target(next_state, target_action)
-
-            self.critic.zero_grad()
-
             q_batch = self.critic(state, action)
             target_q_batch = reward + self.gamma * (1 - done) * next_q_values
-
             value_loss = self.loss(q_batch, target_q_batch)
-
+            self.critic.zero_grad()
             value_loss.backward()
             self.critic_optim.step()
             # Actor update
-            self.actor.zero_grad()
-
             next_action = self.actor(state)
             policy_loss = self.critic(state, next_action).mean()
-
+            self.actor.zero_grad()
             policy_loss.backward()
             self.actor_optim.step()
             # Target update

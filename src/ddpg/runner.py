@@ -8,7 +8,7 @@ from IPython.display import display, clear_output
 from .agent import Agent
 from .config import Config
 from .evaluator import Evaluator
-from .utils import (
+from ..shared.utils import (
     get_output_folder,
     plot_rays,
     show_img,
@@ -73,6 +73,14 @@ class Runner:
                     load_weights['critic']
                 )
             for idx, batch in enumerate(loader, start=1):
+                self.env.initial_state = batch
+                self.agent.initial_state = self.env.initial_state
+                self.agent.clip_angle = batch.clip_angle
+                self.agent.batch_size = batch.size
+                self.agent.chunk_size = batch.chunk_size
+                self.agent.imshape = batch.imshape
+                self.agent.camera_intrinsics = batch.camera_intrinsics
+                self.agent.forget()
                 run(idx, batch)
         except KeyboardInterrupt:
             pass
@@ -87,15 +95,7 @@ class Runner:
         else:
             raise RuntimeError(f'invalid mode: {mode}')
 
-    def train(self, batch_idx, batch):
-        self.env.initial_state = batch
-        self.agent.initial_state = self.env.initial_state
-        self.agent.clip_angle = batch.clip_angle
-        self.agent.batch_size = batch.size
-        self.agent.chunk_size = batch.chunk_size
-        self.agent.imshape = batch.imshape
-        self.agent.camera_intrinsics = batch.camera_intrinsics
-        
+    def train(self, batch_idx, batch):       
         self.agent.is_training = True
         self.agent.forget()
         train_step = 0
@@ -180,15 +180,9 @@ class Runner:
                     self.writer.add_scalar(f'[train]_b{batch_idx}/ep_value_loss', ep_value_loss / step, episode)
                 self.writer.flush()
 
-    def test(self, batch_idx, batch):
-        self.env.initial_state = batch
-        self.agent.initial_state = self.env.initial_state
-        self.agent.clip_angle = batch.clip_angle
-        self.agent.imshape = batch.imshape
-        self.agent.camera_intrinsics = batch.camera_intrinsics
+    def test(self, batch_idx, _):
         self.agent.is_training = False
         self.agent.eval()
-        self.agent.forget()
 
         policy = lambda s: self.agent.select_action(s, decay_eps=False)
         self.evaluator(policy, batch_idx)

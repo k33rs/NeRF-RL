@@ -2,26 +2,28 @@ import gym
 import numpy as np
 import torch
 from gym import spaces
-from typing import TypeVar
+from typing import TypeVar, Callable
 from .geom import camera_to_world
 
 
 RayBundle = TypeVar('RayBundle')
 
 
-class NeRFStudioEnv(gym.Env):
+class NerfEnv(gym.Env):
     def __init__(
             self,
             model,
+            reward_func: Callable,
             reward_thres: float=1.,
             reward_max: float=1.,
             reward_scale: float=1.,
             with_radiance=False
     ):
-        super(NeRFStudioEnv, self).__init__()
+        super(NerfEnv, self).__init__()
         # Initialize environment
         self.rb = None # RayBundle
         self.initial_directions = None
+        self.reward_func = reward_func
         self.reward_thres = reward_thres
         self.reward_max = reward_max
         self.reward_scale = reward_scale
@@ -86,19 +88,19 @@ class NeRFStudioEnv(gym.Env):
             rad = rgb / acc.clip(min=1e-10) * self.reward_max # radiance
         else:
             rad = rgb * self.reward_max
-        rad = rad.mean(dim=-1).unsqueeze(-1) # grayscale
+        rad = rad.mean(dim=-1).unsqueeze(-1) \
+            .clip(min=0, max=self.reward_max) # grayscale
 
         return rad, img
 
     def step(self, action, with_img=False):
         # Take a step in the environment based on the given action
         self.rb.directions.copy_(action)
-        radiance, img = self.eval_model(with_img)
-        radiance = radiance.clip(min=0, max=self.reward_max)
+        rad, img = self.eval_model(with_img)
         # next_state, reward, done
-        reward = (radiance - self.reward_thres) * self.reward_scale
-
-        above_thres = radiance >= self.reward_thres
+        reward = self.reward_func(rad, self.rb.directions, self.rb.imsize) \
+            * self.reward_scale
+        above_thres = rad >= self.reward_thres
         done = above_thres.all().item()
         done_count = above_thres.sum().item()
         info = {

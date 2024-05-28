@@ -3,7 +3,7 @@ from gym import Env
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from IPython.display import display, clear_output
-from .utils import show_img
+from ..shared.utils import show_img
 
 
 class Evaluator(object):
