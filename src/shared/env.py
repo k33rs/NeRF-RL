@@ -2,6 +2,7 @@ import gym
 import numpy as np
 import torch
 from gym import spaces
+from copy import deepcopy
 from typing import TypeVar, Callable
 from .geom import camera_to_world
 
@@ -92,6 +93,32 @@ class NerfEnv(gym.Env):
             .clip(min=0, max=self.reward_max) # grayscale
 
         return rad, img
+    
+    def eval_actions(self, actions):
+        """Compute radiance resulting from the given set of actions"""
+        rb = deepcopy(self.rb)
+        num_repeats = actions.size(0) // rb.size
+        # bring RayBundle to desired shape
+        self.rb.origins = self.rb.origins \
+            .unsqueeze(1).repeat(1, num_repeats, 1).flatten(end_dim=1)
+        self.rb.camera_indices = self.rb.camera_indices \
+            .unsqueeze(1).repeat(1, num_repeats, 1).flatten(end_dim=1)
+        self.rb.metadata['directions_norm'] = self.rb.metadata['directions_norm'] \
+            .unsqueeze(1).repeat(1, num_repeats, 1).flatten(end_dim=1)
+        self.rb.pixel_area = self.rb.pixel_area \
+            .unsqueeze(1).repeat(1, num_repeats, 1).flatten(end_dim=1)
+        self.rb._shape = actions.shape[:-1]
+        self.rb.batch_size *= num_repeats
+        self.rb.camera_to_world = self.rb.camera_to_world \
+            .repeat_interleave(num_repeats, dim=0)
+        self.rb.camera_intrinsics = self.rb.camera_intrinsics \
+            .repeat_interleave(num_repeats, dim=0)
+
+        self.rb.directions = actions
+        rad, _  = self.eval_model()
+
+        self.rb = rb
+        return rad
 
     def step(self, action, with_img=False):
         # Take a step in the environment based on the given action
