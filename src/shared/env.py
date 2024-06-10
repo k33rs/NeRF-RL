@@ -93,7 +93,7 @@ class NerfEnv(gym.Env):
             .clip(min=0, max=self.reward_max) # grayscale
 
         return rad, img
-    
+
     def eval_actions(self, actions):
         """Compute radiance resulting from the given set of actions"""
         rb = deepcopy(self.rb)
@@ -125,8 +125,11 @@ class NerfEnv(gym.Env):
         self.rb.directions.copy_(action)
         rad, img = self.eval_model(with_img)
         # next_state, reward, done
-        reward = self.reward_func(rad, self.rb.directions, self.rb.imsize) \
-            * self.reward_scale
+        reward = self.reward_func(
+            rad * self.reward_scale,
+            self.rb.directions,
+            self.rb.imsize,
+        )
         above_thres = rad >= self.reward_thres
         done = above_thres.all().item()
         done_count = above_thres.sum().item()
