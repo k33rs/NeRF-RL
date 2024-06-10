@@ -40,8 +40,9 @@ class CustomNeRF:
     def __call__(self, rb):
         out = dict()
         rgb_ = torch.tensor([], device=rb.device)
+        step = (rb.origins == rb.origins[0]).all(dim=-1).sum(dim=-1).item()
         # TODO: accumulation
-        for i in range(0, rb.imsize*rb.batch_size, rb.imsize):
+        for i in range(0, rb.size, step):
             # retrieve image from db
             origin = tuple(rb.origins[i].cpu().tolist())
             img = self.db[origin]
@@ -49,12 +50,12 @@ class CustomNeRF:
             rgb = img['rgb'].reshape(*img['shape'], -1)
             rgb = rgb[:rb.imshape[0], :rb.imshape[1]]
             # find intersection of ray directions with image plane
-            points = rb.origins[i:i+rb.imsize] + rb.directions[i:i+rb.imsize]
+            points = rb.origins[i:i+step] + rb.directions[i:i+step]
             img_coords = world_to_image(
                 points,
-                rb.camera_to_world[i//rb.imsize:i//rb.imsize + 1],
-                rb.camera_intrinsics[i//rb.imsize:i//rb.imsize + 1],
-            ).reshape(*rb.imshape, -1)
+                rb.camera_to_world[i//step:i//step + 1],
+                rb.camera_intrinsics[i//step:i//step + 1],
+            ).reshape(step, -1)
             # compute rgb values by bilinear interpolation
             upper_left = img_coords.round().int() - 1 # upper-left of 4 nearest neighbors
             local = img_coords - (upper_left + 0.5) # local coordinates
@@ -68,7 +69,7 @@ class CustomNeRF:
             bottom_right = rgb[(k+1) % rb.imshape[0], (l+1) % rb.imshape[1]]
             _rgb_ = (
                 (1-v)*((1-u)*top_left + u*bottom_left) + v*((1-u)*top_right + u*bottom_right)
-            ).reshape(rb.imsize, -1)
+            ).reshape(step, -1)
             assert not _rgb_.isnan().any()
             # concatenate results
             rgb_ = torch.cat((rgb_, _rgb_))
