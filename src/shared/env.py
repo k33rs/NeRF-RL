@@ -10,6 +10,25 @@ from .geom import camera_to_world
 RayBundle = TypeVar('RayBundle')
 
 
+def reward_func(rad, dir, imsize, thres=.01):
+    """reward is radiance minus number of colliding rays"""
+    dir_3d = dir.reshape(-1, imsize, dir.size(-1))
+    dir_rep1 = dir_3d.unsqueeze(1).repeat(1, imsize, 1, 1)
+    dir_rep2 = dir_3d.unsqueeze(2).repeat(1, 1, imsize, 1)
+
+    dist = (dir_rep1 - dir_rep2).norm(dim=-1)
+    close_count = (
+        (dist < thres).float().sum(dim=-1, keepdim=True) - 1
+    ).flatten(end_dim=1)
+
+    penalty = torch.zeros(*rad.shape, device=rad.device)
+    mask = close_count > 0
+    penalty[mask] = close_count[mask]
+
+    reward = rad - penalty
+    return reward
+
+
 class NerfEnv(gym.Env):
     def __init__(
             self,
