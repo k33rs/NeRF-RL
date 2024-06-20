@@ -55,7 +55,6 @@ def next_batch(cameras, indices, device='cpu', debug=False):
     rb.imshape = imshape
     rb.imsize = torch.tensor(imshape).prod().item()
     rb.batch_size = batch_size
-    rb.chunk_size = 625
     rb.device = rb.origins.device
     # keep camera parameters for mapping world to image coordinates
     rb.camera_to_world = cameras.camera_to_worlds.to(device)
@@ -70,6 +69,9 @@ def next_batch(cameras, indices, device='cpu', debug=False):
             device=device,
         )
     )
+    rb.clip_angle_small = rb.clip_angle / 8
+    # distance between rays passing through pixel centers (for reward function)
+    rb.px_dist = (rb.directions[0] - rb.directions[1]).norm(dim=-1)
 
     if debug:
         size_bytes = rb.origins.element_size() * rb.origins.nelement() \

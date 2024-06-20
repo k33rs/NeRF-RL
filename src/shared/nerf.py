@@ -25,7 +25,8 @@ def pre_render(model, dataloader, database, plot=False):
             database[origin] = {
                 'rgb': rgb_,
                 'accumulation': acc_,
-                'shape': rb.imshape,
+                'imshape': rb.imshape,
+                'imsize': rb.imsize,
             }
             if plot:
                 plt.figure()
@@ -47,7 +48,7 @@ class CustomNeRF:
             origin = tuple(rb.origins[i].cpu().tolist())
             img = self.db[origin]
             # select portion of image according to rb shape
-            rgb = img['rgb'].reshape(*img['shape'], -1)
+            rgb = img['rgb'].reshape(*img['imshape'], -1)
             rgb = rgb[:rb.imshape[0], :rb.imshape[1]]
             # find intersection of ray directions with image plane
             points = rb.origins[i:i+step] + rb.directions[i:i+step]

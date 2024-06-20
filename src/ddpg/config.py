@@ -18,11 +18,11 @@ class Config():
     tau: float = 1e-3 # soft target update factor
     eps: float = 1.
     eps_decay: float = 2e-5
-    episodes: int = 200
-    episode_steps: int = 1000
+    episodes: int = 400
+    episode_steps: int = 500
     warmup: int = 1000
     max_episodes: bool = True
-    replay_bufsize: int = 5000000
+    replay_bufsize: int = 1_000_000
     window_length: int = 1
     eval_episodes: int = 10
-    eval_episode_steps: int = 1000 # max length of episode in eval mode
+    eval_episode_steps: int = 500 # max length of episode in eval mode

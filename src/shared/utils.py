@@ -3,6 +3,8 @@ import numpy as np
 import os
 import torch
 import matplotlib.pyplot as plt
+import matplotlib.colors as colors
+import matplotlib.cm as cm
 from IPython.display import display, clear_output
 
 
@@ -98,24 +100,38 @@ def plot_rays(rays,
     return fig, ax
 
 
-def show_img(img,
+def show_img(img_batch,
              fig=None, ax=None, cmap='gray',
-             title='', write_path=None, stdout=False):
-    nrows = math.ceil(img.shape[0] / 2)
-    ncols = min(2, img.shape[0])
+             title='', write_path=None, stdout=False,
+             three_d=False):
+    nrows = math.ceil(img_batch.shape[0] / 2)
+    ncols = min(2, img_batch.shape[0])
 
     if fig is None:
-        fig, ax = plt.subplots(nrows, ncols, squeeze=False)
+        subplot_kw = dict(projection='3d') if three_d else None
+        fig, ax = plt.subplots(nrows, ncols, squeeze=False, subplot_kw=subplot_kw)
 
     for i in range(nrows):
         for j in range(ncols):
             idx = i*ncols + j
             ax[i, j].cla()
             ax[i, j].axis('off')
-            if idx < img.shape[0]:
-                ax[i, j].imshow(img[idx], cmap=cmap, vmin=0, vmax=1)
+            if idx < img_batch.shape[0]:
+                img = img_batch[idx]
+                if three_d:
+                    _x = np.arange(img.shape[0])
+                    _y = np.arange(img.shape[1])
+                    _xx, _yy = np.meshgrid(_x, _y)
+                    x, y = _xx.ravel(), _yy.ravel()
+                    z = np.zeros_like(x)
+                    dz = img.T.ravel()
+                    norm = colors.Normalize(dz.min(), dz.max())
+                    color = plt.get_cmap(cmap)(norm(dz))
+                    ax[i, j].bar3d(x, y, z, 1, 1, dz, color=color)
+                else:
+                    ax[i, j].imshow(img, cmap=cmap, vmin=0, vmax=1)
             else:
-                ax[i, j].imshow(np.ones(img.shape[1:]))
+                ax[i, j].imshow(np.ones(img_batch.shape[1:]))
 
     fig.suptitle(title, fontsize=12)
     fig.tight_layout()

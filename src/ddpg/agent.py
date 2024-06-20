@@ -21,12 +21,7 @@ from ..shared.utils import (
 
 
 class Agent:
-    def __init__(
-            self,
-            state_dim,
-            action_dim,
-            config: Config
-    ):
+    def __init__(self, state_dim, action_dim, config: Config):
         self.actor = Actor(state_dim, action_dim, **config.net).to(config.device)
         self.actor_target = Actor(state_dim, action_dim, **config.net).to(config.device)
         self.actor_optim = Adam(self.actor.parameters(), lr=config.actor_lr, maximize=True)
@@ -49,7 +44,6 @@ class Agent:
 
         # hyperparameters
         self.batch_size = None # managed by runner
-        self.chunk_size = None # managed by runner
         self.mem_batch_size = config.mem_batch_size
         self.tau = config.tau
         self.gamma = config.gamma
@@ -60,7 +54,9 @@ class Agent:
         self.initial_state = None # initial state
         self.action_dim = action_dim
         self.clip_angle = None # managed by runner
+        self.clip_angle_small = None # managed by runner
         self.imshape = None # managed by runner
+        self.imsize = None # managed by runner
         self.camera_intrinsics = None # managed by runner
         self.is_training = True
 
@@ -93,14 +89,14 @@ class Agent:
         if self.is_training:
             next_dir = random_dir(
                 dir=next_dir,
-                angle_rad=max(self.eps, 0) * self.clip_angle/8,
+                angle_rad=max(self.eps, 0) * self.clip_angle_small,
                 angle_sample='normal',
             )
         # clip w.r.t. old direction
         next_dir = clip_to_angle(
             dir=next_dir,
             axis=curr_dir,
-            clip_angle_rad=self.clip_angle/8,
+            clip_angle_rad=self.clip_angle_small,
         )
         # clip to image boundaries
         next_dir = clip_to_image(
@@ -141,11 +137,11 @@ class Agent:
         policy_loss_agg = 0
         value_loss_agg = 0
 
-        for i in range(0, self.batch_size, self.chunk_size):
-            state = to_tensor(state_batch[:, i:i+self.chunk_size], self.device)
-            action = to_tensor(action_batch[:, i:i+self.chunk_size], self.device)
-            next_state = to_tensor(next_state_batch[:, i:i+self.chunk_size], self.device)
-            reward = to_tensor(reward_batch[:, i:i+self.chunk_size], self.device)
+        for i in range(0, self.batch_size, self.imsize):
+            state = to_tensor(state_batch[:, i:i+self.imsize], self.device)
+            action = to_tensor(action_batch[:, i:i+self.imsize], self.device)
+            next_state = to_tensor(next_state_batch[:, i:i+self.imsize], self.device)
+            reward = to_tensor(reward_batch[:, i:i+self.imsize], self.device)
             # Critic update (TD)
             target_action = self.actor_target(next_state)
             next_q_values = self.critic_target(next_state, target_action)
@@ -168,7 +164,7 @@ class Agent:
             value_loss_agg += value_loss.item()
             policy_loss_agg += policy_loss.item()
 
-        nsteps = math.ceil(self.batch_size / self.chunk_size)
+        nsteps = math.ceil(self.batch_size / self.imsize)
         policy_loss_agg /= nsteps
         value_loss_agg /= nsteps
         return policy_loss_agg, value_loss_agg

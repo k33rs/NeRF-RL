@@ -8,11 +8,7 @@ from IPython.display import display, clear_output
 from .agent import Agent
 from .config import Config
 from .evaluator import Evaluator
-from ..shared.utils import (
-    get_output_folder,
-    plot_rays,
-    show_img,
-)
+from ..shared.utils import get_output_folder, show_img
 
 
 class Runner:
@@ -26,8 +22,6 @@ class Runner:
             evaluate=False,
             tensorboard=False,
             with_img=False,
-            plot_rays=False,
-            num_rays=1,
     ):
         self.train_loader = train_loader
         self.test_loader = test_loader
@@ -45,8 +39,6 @@ class Runner:
         self.tensorboard = tensorboard
         self.writer = SummaryWriter(log_dir=self.save_path) if tensorboard else None
         self.with_img = with_img
-        self.plot_rays = plot_rays
-        self.num_rays = num_rays
 
         self.state_dim = env.observation_space.shape[0]
         self.action_dim = env.action_space.shape[0]
@@ -72,16 +64,17 @@ class Runner:
                     load_weights['actor'],
                     load_weights['critic']
                 )
-            for idx, batch in enumerate(loader, start=1):
-                self.env.initial_state = batch
+            for idx, rb in enumerate(loader, start=1):
+                self.env.initial_state = rb
                 self.agent.initial_state = self.env.initial_state
-                self.agent.clip_angle = batch.clip_angle
-                self.agent.batch_size = batch.size
-                self.agent.chunk_size = batch.chunk_size
-                self.agent.imshape = batch.imshape
-                self.agent.camera_intrinsics = batch.camera_intrinsics
+                self.agent.clip_angle = rb.clip_angle
+                self.agent.clip_angle_small = rb.clip_angle_small
+                self.agent.batch_size = rb.size
+                self.agent.imshape = rb.imshape
+                self.agent.imsize = rb.imsize
+                self.agent.camera_intrinsics = rb.camera_intrinsics
                 self.agent.forget()
-                run(idx, batch)
+                run(idx)
         except KeyboardInterrupt:
             pass
         if self.tensorboard:
@@ -95,12 +88,13 @@ class Runner:
         else:
             raise RuntimeError(f'invalid mode: {mode}')
 
-    def train(self, batch_idx, batch):       
+    def train(self, batch_idx):
+        self.env.with_penalty = False
         self.agent.is_training = True
         self.agent.forget()
         train_step = 0
 
-        if self.plot_rays or self.with_img:
+        if self.with_img:
             fig, ax = None, None
 
         episodes = range(1, self.episodes + 1) if self.max_episodes \
@@ -129,26 +123,20 @@ class Runner:
                         action = self.agent.select_action(state)
                     # env response
                     next_state, reward, done, info = self.env.step(action, self.with_img)
+                # max number of steps
+                if step == self.episode_steps:
+                    done = True
                 # agent observes next state - updates policy
                 self.agent.observe(state, action, reward, done)
                 if train_step >= self.warmup:
                     policy_loss, value_loss = self.agent.update_policy()
-                # plot action
-                if self.plot_rays:
-                    fig, ax = plot_rays(
-                        next_state[:batch.imsize, 3:],
-                        batch.imsize // self.num_rays,
-                        fig, ax,
-                        title=log,
-                    )
                 # update plots
                 if time_to_save:
                     if self.with_img:
                         fig, ax = show_img(info['img'], fig, ax, stdout=True, title=log)
                     if self.tensorboard:
                         self.writer.add_scalar(f'[train]_b{batch_idx}_ep{episode}/mean_reward', reward.mean().item(), step)
-                        self.writer.add_scalar(f'[train]_b{batch_idx}_ep{episode}/done_count', info['done_count'], step)
-                        self.writer.add_scalar(f'[train]_b{batch_idx}_ep{episode}/done_ratio', info['done_ratio'], step)
+                        self.writer.add_scalar(f'[train]_b{batch_idx}_ep{episode}/done', info['done'], step)
                         if train_step >= self.warmup:
                             self.writer.add_scalar(f'[train]_b{batch_idx}_ep{episode}/policy_loss', policy_loss, step)
                             self.writer.add_scalar(f'[train]_b{batch_idx}_ep{episode}/value_loss', value_loss, step)
@@ -173,14 +161,14 @@ class Runner:
             if self.tensorboard:
                 self.writer.add_scalar(f'[train]_b{batch_idx}/ep_mean_reward', ep_reward.mean().item(), episode)
                 self.writer.add_scalar(f'[train]_b{batch_idx}/ep_steps', step, episode)
-                self.writer.add_scalar(f'[train]_b{batch_idx}/ep_done_count', info['done_count'], episode)
-                self.writer.add_scalar(f'[train]_b{batch_idx}/ep_done_ratio', info['done_ratio'], episode)
+                self.writer.add_scalar(f'[train]_b{batch_idx}/ep_done', info['done'], episode)
                 if train_step - 1 >= self.warmup:
                     self.writer.add_scalar(f'[train]_b{batch_idx}/ep_policy_loss', ep_policy_loss / step, episode)
                     self.writer.add_scalar(f'[train]_b{batch_idx}/ep_value_loss', ep_value_loss / step, episode)
                 self.writer.flush()
 
-    def test(self, batch_idx, _):
+    def test(self, batch_idx):
+        self.env.with_penalty = True
         self.agent.is_training = False
         self.agent.eval()
 
