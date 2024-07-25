@@ -42,7 +42,7 @@ class Evaluator(object):
                 # take action, collect reward
                 with torch.no_grad():
                     action, _ = policy(state)
-                    state, reward, done, info = self.env.step(action, self.with_img)
+                    state, reward, done, info = self.env.step(action)
                 # update plots
                 if self.with_img:
                     fig, ax = show_img(info['img'], fig, ax, title=log, stdout=True)

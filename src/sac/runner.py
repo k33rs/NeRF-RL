@@ -93,8 +93,6 @@ class Runner:
             return self.train_loader, self.train
         elif mode == 'test':
             return self.test_loader, self.test
-        else:
-            raise RuntimeError(f'invalid mode: {mode}')
 
     def train(self, batch_idx, batch):
         self.agent.is_training = True # TODO: remove?
@@ -128,7 +126,7 @@ class Runner:
                     else:
                         action, _ = self.agent.select_action(state)
                     # env response
-                    next_state, reward, done, info = self.env.step(action, self.with_img)
+                    next_state, reward, done, info = self.env.step(action)
                 # agent observes next state - updates policy
                 self.agent.observe(state, action, reward, done)
                 if train_step >= self.warmup:

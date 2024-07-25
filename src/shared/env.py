@@ -4,7 +4,7 @@ import torch
 from gym import spaces
 from copy import deepcopy
 from typing import TypeVar
-from .geom import camera_to_world
+from .geom import camera_to_world, camera_to_image
 
 
 RayBundle = TypeVar('RayBundle')
@@ -41,23 +41,23 @@ class NerfEnv(gym.Env):
             high=np.array([np.inf for _ in range(3)]),
             dtype=np.float32,
         )
-    
-    @property
-    def directions(self):
-        return self.rb.directions
-    
-    @property
-    def imsize(self):
-        return self.rb.imsize
+        self._img = None # managed by runner
+        self.ray_counts = None
+
+    def init_img(self):
+        self._img = torch.zeros(
+            (self.rb.batch_size, *self.rb.imshape),
+            device=self.rb.device
+        )
+        self.ray_counts = torch.zeros(
+            (self.rb.batch_size, *self.rb.imshape),
+            device=self.rb.device,
+            dtype=torch.int
+        )
 
     @property
-    def px_dist(self):
-        return self.rb.px_dist
-    
-    @property
-    def reward_max(self):
-        reward = ((self.rad_max - self.rad_thres) / self.rad_max) * self.reward_scale
-        return torch.tensor(reward, device=self.rb.device)
+    def img(self):
+        return self._img.view(-1, *self.rb.imshape).cpu().numpy()
 
     @property
     def state(self):
@@ -85,22 +85,23 @@ class NerfEnv(gym.Env):
     def reset(self):
         # Reset the environment to an initial state
         self.rb.directions.copy_(self.initial_directions)
+        self.init_img()
         return self.initial_state
 
-    def eval_model(self, with_img=False):
+    def eval_model(self):
         """Compute radiance at current state."""
-        directions = self.rb.directions.clone() # camera coords
-        new_directions = camera_to_world(
-            self.rb.directions, self.rb.camera_to_world
-        ) - self.rb.origins # world coords
-        self.rb.directions = new_directions / new_directions.norm(dim=-1, keepdim=True)
-        outputs = self.model(self.rb)
-        self.rb.directions = directions # back to camera
+        rb = deepcopy(self.rb)
+        img_coords = camera_to_image(
+            rb.directions, rb.camera_intrinsics
+        ).floor().int().view(rb.batch_size, *self.rb.imshape, -1)
+        rb.directions = camera_to_world(rb.directions, rb.camera_to_world) - rb.origins
+        rb.directions /= rb.directions.norm(dim=-1, keepdim=True)
+        outputs = self.model(rb)
 
-        rgb = outputs['rgb'] # [0, 1]
-        img = rgb.mean(dim=-1) \
-            .reshape(-1, *self.rb.imshape) \
-                .detach().cpu().numpy() if with_img else None
+        rgb = outputs['rgb'].detach() # [0, 1]
+        raw_img = rgb.mean(dim=-1).view(rb.batch_size, *self.rb.imshape, -1)
+        self.update_img(raw_img, img_coords)
+        raw_img = raw_img.squeeze(-1).cpu().numpy()
 
         if self.with_radiance:
             acc = outputs['accumulation'] # [0, 1]
@@ -110,21 +111,52 @@ class NerfEnv(gym.Env):
 
         rad = rad.mean(dim=-1, keepdim=True) # grayscale
         rad = rad.clip(min=0, max=self.rad_max)
-        return rad, img
+        return rad, raw_img
+    
+    def update_img(self, raw_img, img_coords):
+        # accumulate results into the rightful pixels
+        # for i, batch in enumerate(img_coords):
+        #     for row in batch:
+        #         for x, y in row:
+        #             n = self.ray_counts[i, x, y]
+        #             self._img[i, x, y] = (self._img[i, x, y] * n + raw_img[i, x, y]) / (n + 1)
+        #             self.ray_counts[i, x, y] = n + 1
+        img_idx = torch.arange(img_coords.size(0), device=img_coords.device) \
+            .view(-1, 1, 1).expand_as(img_coords[..., 0]).flatten()
+        row_idx = img_coords[..., 0].flatten()
+        col_idx = img_coords[..., 1].flatten()
 
-    def step(self, action, with_img=False):
+        flat_idx = img_idx * self.rb.imsize + row_idx * self.rb.imshape[1] + col_idx
+
+        counts_up = self.ray_counts.flatten()
+
+        img_up = self._img.flatten() * counts_up
+        img_up.scatter_add_(dim=0, index=flat_idx, src=raw_img.flatten())
+
+        counts_up.scatter_add_(dim=0, index=flat_idx, src=torch.ones_like(counts_up))
+        img_up /= counts_up
+
+        self._img = img_up.view_as(self._img)
+        self.ray_counts = counts_up.view_as(self.ray_counts)
+    
+    def get_density(self):
+        return (
+            self._img / self._img.sum(dim=(1, 2), keepdim=True)
+        ).cpu().numpy()
+
+    def step(self, action):
         if self.with_penalty:
             directions = self.rb.directions.clone()
         # take step by moving rays
         self.rb.directions.copy_(action)
-        rad, img = self.eval_model(with_img)
+        rad, _ = self.eval_model()
         reward, penalty = self.reward_func(rad)
         above_thres = rad >= self.rad_thres
         done = above_thres.all().item()
         done_count = above_thres.sum().item()
         info = {
             'done': done_count / action.size(0),
-            'img': img,
+            'img': self.img,
         }
         # freeze ray when penalty > 0
         if self.with_penalty:
@@ -142,16 +174,16 @@ class NerfEnv(gym.Env):
         penalty = torch.zeros(*rad.shape, device=rad.device)
 
         if self.with_penalty:
-            dir_3d = self.directions.reshape(-1, self.imsize, self.directions.size(-1))
-            rad_3d = rad.reshape(-1, self.imsize, rad.size(-1)) \
-                .repeat(1, 1, self.imsize)
+            dir_3d = self.rb.directions.reshape(-1, self.rb.imsize, self.rb.directions.size(-1))
+            rad_3d = rad.reshape(-1, self.rb.imsize, rad.size(-1)) \
+                .repeat(1, 1, self.rb.imsize)
 
-            dir_rep1 = dir_3d.unsqueeze(1).repeat(1, self.imsize, 1, 1)
-            dir_rep2 = dir_3d.unsqueeze(2).repeat(1, 1, self.imsize, 1)
+            dir_rep1 = dir_3d.unsqueeze(1).repeat(1, self.rb.imsize, 1, 1)
+            dir_rep2 = dir_3d.unsqueeze(2).repeat(1, 1, self.rb.imsize, 1)
             dist = (dir_rep1 - dir_rep2).norm(dim=-1)
             # max number of rays per pixel is (max_resolution - 1)^2
-            dist_min = self.px_dist / self.reward_max_resolution
-            dist_thres = (self.px_dist * (self.rad_max - rad_3d) / self.rad_max).clip(min=dist_min)
+            dist_min = self.rb.px_dist / self.reward_max_resolution
+            dist_thres = (self.rb.px_dist * (self.rad_max - rad_3d) / self.rad_max).clip(min=dist_min)
             close_count = (
                 (dist < dist_thres).float().sum(dim=-1, keepdim=True) - 1
             ).flatten(end_dim=1)

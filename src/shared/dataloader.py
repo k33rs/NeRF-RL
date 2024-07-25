@@ -1,21 +1,20 @@
 import torch
-from typing import Callable
-from .geom import world_to_camera
+from .geom import world_to_camera, random_dir
 
 
 class CustomDL:
     def __init__(
             self,
-            next_call: Callable,
             cameras=None,
             step_size=1,
             device='cpu',
+            random_rays=False,
     ):
-        self.next_call = next_call
         self.cameras = cameras
         self.step = 0
         self.step_size = step_size
         self.device = device
+        self.random_rays = random_rays
 
     def __iter__(self):
         return self
@@ -27,20 +26,28 @@ class CustomDL:
         batch = self[self.step]
         self.step += self.step_size
         return batch
-    
+
     def __getitem__(self, step):
-        return self.next_call(self.cameras, range(step, step+self.step_size), self.device)
-    
+        return next_batch(
+            self.cameras,
+            range(step, step+self.step_size),
+            self.device,
+            random_rays=self.random_rays
+        )
+
     def __len__(self):
         return len(self.cameras)
-    
+
     def reset(self, step=0):
         self.step = step
 
 
-def next_batch(cameras, indices, device='cpu', debug=False):
+def next_batch(cameras, indices, device='cpu', debug=False, random_rays=False):
     cameras = cameras[torch.tensor(indices)]
-    rb = cameras.generate_rays(torch.tensor([[i] for i in range(len(indices))]))
+    rb = cameras.generate_rays(
+        torch.tensor([[i] for i in range(len(indices))]),
+        disable_distortion=True,
+    )
     # flatten the RayBundle
     imshape = rb.shape[:2]
     batch_size = rb.shape[-1]
@@ -78,9 +85,18 @@ def next_batch(cameras, indices, device='cpu', debug=False):
             + rb.directions.element_size() * rb.directions.nelement() \
             + rb.camera_indices.element_size() * rb.camera_indices.nelement() \
             + rb.metadata['directions_norm'].element_size() * rb.metadata['directions_norm'].nelement() \
-            + rb.pixel_area.element_size() * rb.pixel_area.nelement() \
-            + rb.fov_axis.element_size() * rb.fov_axis.nelement() \
-            + rb.fov.element_size() * rb.fov.nelement()
+            + rb.pixel_area.element_size() * rb.pixel_area.nelement()
         print('camera indices:', indices, 'size (bytes):', size_bytes)
+
+    if random_rays:
+        # find ray directions that intersect pixel corners
+        # 1) middle
+        px_angle = torch.acos(
+            torch.tensor(
+                [(rb.directions[0] @ rb.directions[1]).clip(-1, 1)],
+                device=device,
+            )
+        ) # angle between directions
+        rb.directions = random_dir(rb.directions, px_angle / 3)
 
     return rb

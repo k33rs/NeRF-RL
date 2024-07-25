@@ -58,6 +58,7 @@ class Runner:
             load_weights=None
     ):
         loader, run = self.route(mode)
+        results = None # stat test results
         try:
             if load_weights:
                 self.agent.load_weights(
@@ -66,6 +67,7 @@ class Runner:
                 )
             for idx, rb in enumerate(loader, start=1):
                 self.env.initial_state = rb
+                self.env.init_img()
                 self.agent.initial_state = self.env.initial_state
                 self.agent.clip_angle = rb.clip_angle
                 self.agent.clip_angle_small = rb.clip_angle_small
@@ -74,19 +76,22 @@ class Runner:
                 self.agent.imsize = rb.imsize
                 self.agent.camera_intrinsics = rb.camera_intrinsics
                 self.agent.forget()
-                run(idx)
+                res = run(idx)
+                if res is not None:
+                    if results is None:
+                        results = []
+                    results.append(res)
         except KeyboardInterrupt:
             pass
         if self.tensorboard:
             self.writer.close()
+        return results
 
     def route(self, mode: Literal['train', 'test']):
         if mode == 'train':
             return self.train_loader, self.train
         elif mode == 'test':
             return self.test_loader, self.test
-        else:
-            raise RuntimeError(f'invalid mode: {mode}')
 
     def train(self, batch_idx):
         self.env.with_penalty = False
@@ -122,7 +127,7 @@ class Runner:
                     else:
                         action = self.agent.select_action(state)
                     # env response
-                    next_state, reward, done, info = self.env.step(action, self.with_img)
+                    next_state, reward, done, info = self.env.step(action)
                 # max number of steps
                 if step == self.episode_steps:
                     done = True
@@ -173,4 +178,5 @@ class Runner:
         self.agent.eval()
 
         policy = lambda s: self.agent.select_action(s, decay_eps=False)
-        self.evaluator(policy, batch_idx)
+        results = self.evaluator(policy, batch_idx)
+        return results

@@ -5,9 +5,10 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 from IPython.display import display, clear_output
 from ..shared.utils import show_img
+from ..shared.geom import camera_to_image
 
 
-class Evaluator(object):
+class Evaluator:
     def __init__(
             self,
             env: Env,
@@ -35,7 +36,7 @@ class Evaluator(object):
             state = self.env.reset()
             ep_reward = torch.zeros(1, device=state.device)
 
-            _, img = self.env.eval_model(self.with_img)
+            _, img = self.env.eval_model()
 
             # start episode
             for step in range(1, self.episode_steps + 1):
@@ -46,7 +47,7 @@ class Evaluator(object):
                 # take action, collect reward
                 with torch.no_grad():
                     action = policy(state)
-                    state, reward, done, info = self.env.step(action, self.with_img)
+                    state, reward, done, info = self.env.step(action)
                 # update plots
                 if self.with_img:
                     two_img = np.concatenate((img, info['img']), axis=0)
@@ -69,3 +70,11 @@ class Evaluator(object):
                 self.writer.add_scalar(f'[eval]_b{batch_idx}/ep_steps', step, episode)
                 self.writer.add_scalar(f'[eval]_b{batch_idx}/ep_done', info['done'], episode)
                 self.writer.flush()
+
+        # IS integral estimator
+        f_values = self.env.img
+        f_values = f_values[f_values > 0]
+        density = self.env.get_density()
+        density = density[density > 0]
+        intgr = (f_values / density).mean()
+        return intgr

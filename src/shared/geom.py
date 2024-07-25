@@ -21,8 +21,6 @@ def random_dir(
         theta = torch.rand(num_rays, device=dir.device) * angle_rad
     elif angle_sample == 'normal':
         theta = torch.randn(num_rays, device=dir.device).abs() * angle_rad
-    else:
-        raise RuntimeError(f'invalid angle sampling strategy: {angle_sample}')
     # rotation matrix
     cos_theta = torch.cos(theta)
     sin_theta = torch.sin(theta)
@@ -232,4 +230,21 @@ def world_to_image(
     """
     camera = world_to_camera(world, camera2world)
     img = camera_to_image(camera, intrinsics)
-    return img    
+    return img
+
+
+def sample_barycentric_coords(num_samples):
+    samples = np.random.uniform(size=(num_samples, 3))
+    samples /= samples.sum(axis=-1, keepdims=True)
+    return samples
+
+
+def sample_convex_hull(triangles, num_samples):
+    # sample triangle from convex hull
+    triangle_idx = np.random.choice(triangles.shape[0], size=num_samples)
+    tri_samples = triangles[triangle_idx]
+    # sample barycentric coordinates for each triangle
+    bary = sample_barycentric_coords(num_samples)
+    # sample points
+    samples = np.einsum('...ij,...i', tri_samples, bary)
+    return samples
