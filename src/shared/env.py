@@ -57,7 +57,7 @@ class NerfEnv(gym.Env):
 
     @property
     def img(self):
-        return self._img.view(-1, *self.rb.imshape).cpu().numpy()
+        return self._img.cpu().numpy()
 
     @property
     def state(self):
@@ -141,7 +141,7 @@ class NerfEnv(gym.Env):
     
     def get_density(self):
         return (
-            self._img / self._img.sum(dim=(1, 2), keepdim=True)
+            self._img / self._img.sum(dim=(-2, -1), keepdim=True)
         ).cpu().numpy()
 
     def step(self, action):
@@ -174,15 +174,15 @@ class NerfEnv(gym.Env):
         penalty = torch.zeros(*rad.shape, device=rad.device)
 
         if self.with_penalty:
-            dir_3d = self.rb.directions.reshape(-1, self.rb.imsize, self.rb.directions.size(-1))
-            rad_3d = rad.reshape(-1, self.rb.imsize, rad.size(-1)) \
+            dir_3d = self.rb.directions.view(-1, self.rb.imsize, self.rb.directions.size(-1))
+            rad_3d = rad.view(-1, self.rb.imsize, rad.size(-1)) \
                 .repeat(1, 1, self.rb.imsize)
 
             dir_rep1 = dir_3d.unsqueeze(1).repeat(1, self.rb.imsize, 1, 1)
             dir_rep2 = dir_3d.unsqueeze(2).repeat(1, 1, self.rb.imsize, 1)
             dist = (dir_rep1 - dir_rep2).norm(dim=-1)
-            # max number of rays per pixel is (max_resolution - 1)^2
-            dist_min = self.rb.px_dist / self.reward_max_resolution
+            # max number of rays per pixel is max_resolution^2
+            dist_min = self.rb.px_dist / (self.reward_max_resolution + 1)
             dist_thres = (self.rb.px_dist * (self.rad_max - rad_3d) / self.rad_max).clip(min=dist_min)
             close_count = (
                 (dist < dist_thres).float().sum(dim=-1, keepdim=True) - 1

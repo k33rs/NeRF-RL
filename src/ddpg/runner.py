@@ -94,7 +94,6 @@ class Runner:
             return self.test_loader, self.test
 
     def train(self, batch_idx):
-        self.env.with_penalty = False
         self.agent.is_training = True
         self.agent.forget()
         train_step = 0
@@ -173,7 +172,6 @@ class Runner:
                 self.writer.flush()
 
     def test(self, batch_idx):
-        self.env.with_penalty = True
         self.agent.is_training = False
         self.agent.eval()
 
