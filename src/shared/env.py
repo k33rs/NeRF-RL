@@ -17,6 +17,7 @@ class NerfEnv(gym.Env):
             rad_thres: float=1.,
             rad_max: float=1.,
             reward_scale: float=1.,
+            reward_thres: float=1.,
             reward_max_resolution: int=1,
             is_training=False,
             with_radiance=False
@@ -28,6 +29,7 @@ class NerfEnv(gym.Env):
         self.rad_thres = rad_thres
         self.rad_max = rad_max
         self.reward_scale = reward_scale
+        self.reward_thres = reward_thres
         self.reward_max_resolution = reward_max_resolution
         self.is_training = is_training
         self.with_penalty = False # managed by runner
@@ -165,7 +167,7 @@ class NerfEnv(gym.Env):
             mask = torch.logical_and(close_count > 0, rad >= self.rad_thres)
             penalty[mask] = close_count[mask]
 
-        reward = ((rad - self.rad_thres) / self.rad_max - penalty) * self.reward_scale
+        reward = ((rad - self.reward_thres) / self.rad_max - penalty) * self.reward_scale
         return reward, penalty
     
     def update_img(self, img):
@@ -201,10 +203,13 @@ class NerfEnv(gym.Env):
         self._img = img_up.view_as(self._img)
         self.ray_counts = counts_up.view_as(self.ray_counts)
     
-    def get_density(self):
-        return (
+    def get_density(self, desired=False):
+        res = (
             self._img / self._img.sum(dim=(-2, -1), keepdim=True)
-        ).cpu().numpy()
+        ) if desired else (
+            self.ray_counts / self.ray_counts.sum(dim=(-2, -1), keepdim=True)
+        )
+        return res.cpu().numpy()
     
     def eval_actions(self, actions):
         """Compute radiance resulting from the given set of actions"""

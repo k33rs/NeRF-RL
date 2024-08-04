@@ -72,9 +72,14 @@ class Evaluator:
                 self.writer.flush()
 
         # IS integral estimator
-        f_values = self.env.img
-        f_values = f_values[f_values > 0]
-        density = self.env.get_density()
-        density = density[density > 0]
-        intgr = (f_values / density).mean()
-        return intgr
+        if not self.env.is_training:
+            f_values = self.env.img
+            density = self.env.get_density()
+            intgr = (f_values / density).mean()
+        
+            if self.with_img:
+                desired = self.env.get_density(desired=True)
+                two_img = np.concatenate((density, desired), axis=0)
+                show_img(two_img, fig3d, ax3d, title=f'density {log}', write_path=self.save_path, three_d=True)
+
+            return intgr

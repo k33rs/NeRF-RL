@@ -18,7 +18,7 @@ class Config():
     tau: float = 1e-3 # soft target update factor
     eps: float = 1.
     eps_decay: float = 2e-5
-    episodes: int = 400
+    episodes: int = 500
     episode_steps: int = 500
     warmup: int = 1000
     max_episodes: bool = True
