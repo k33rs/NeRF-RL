@@ -9,12 +9,14 @@ class CustomDL:
             step_size=1,
             device='cpu',
             random_rays=False,
+            disable_distortion=False,
     ):
         self.cameras = cameras
         self.step = 0
         self.step_size = step_size
         self.device = device
         self.random_rays = random_rays
+        self.disable_distortion = disable_distortion
 
     def __iter__(self):
         return self
@@ -32,7 +34,8 @@ class CustomDL:
             self.cameras,
             range(step, step+self.step_size),
             self.device,
-            random_rays=self.random_rays
+            random_rays=self.random_rays,
+            disable_distortion=self.disable_distortion,
         )
 
     def __len__(self):
@@ -42,11 +45,11 @@ class CustomDL:
         self.step = step
 
 
-def next_batch(cameras, indices, device='cpu', debug=False, random_rays=False):
+def next_batch(cameras, indices, device='cpu', debug=False, random_rays=False, disable_distortion=False):
     cameras = cameras[torch.tensor(indices)]
     rb = cameras.generate_rays(
         torch.tensor([[i] for i in range(len(indices))]),
-        disable_distortion=True,
+        disable_distortion=disable_distortion,
     )
     # flatten the RayBundle
     imshape = rb.shape[:2]

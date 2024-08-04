@@ -18,6 +18,7 @@ class NerfEnv(gym.Env):
             rad_max: float=1.,
             reward_scale: float=1.,
             reward_max_resolution: int=1,
+            is_training=False,
             with_radiance=False
     ):
         super(NerfEnv, self).__init__()
@@ -28,6 +29,7 @@ class NerfEnv(gym.Env):
         self.rad_max = rad_max
         self.reward_scale = reward_scale
         self.reward_max_resolution = reward_max_resolution
+        self.is_training = is_training
         self.with_penalty = False # managed by runner
         self.with_radiance = with_radiance
         self.model = model
@@ -45,6 +47,9 @@ class NerfEnv(gym.Env):
         self.ray_counts = None
 
     def init_img(self):
+        if self.is_training:
+            return
+
         self._img = torch.zeros(
             (self.rb.batch_size, *self.rb.imshape),
             device=self.rb.device
@@ -90,18 +95,18 @@ class NerfEnv(gym.Env):
 
     def eval_model(self):
         """Compute radiance at current state."""
-        rb = deepcopy(self.rb)
-        img_coords = camera_to_image(
-            rb.directions, rb.camera_intrinsics
-        ).floor().int().view(rb.batch_size, *self.rb.imshape, -1)
-        rb.directions = camera_to_world(rb.directions, rb.camera_to_world) - rb.origins
-        rb.directions /= rb.directions.norm(dim=-1, keepdim=True)
-        outputs = self.model(rb)
+        directions = self.rb.directions.clone()
+        self.rb.directions = camera_to_world(
+            self.rb.directions, self.rb.camera_to_world
+        ) - self.rb.origins
+        self.rb.directions /= self.rb.directions.norm(dim=-1, keepdim=True)
+        outputs = self.model(self.rb)
+        self.rb.directions = directions
 
         rgb = outputs['rgb'].detach() # [0, 1]
-        raw_img = rgb.mean(dim=-1).view(rb.batch_size, *self.rb.imshape, -1)
-        self.update_img(raw_img, img_coords)
-        raw_img = raw_img.squeeze(-1).cpu().numpy()
+        img = rgb.mean(dim=-1).view(self.rb.batch_size, *self.rb.imshape, -1)
+        self.update_img(img)
+        img = img.squeeze(-1).cpu().numpy()
 
         if self.with_radiance:
             acc = outputs['accumulation'] # [0, 1]
@@ -111,52 +116,21 @@ class NerfEnv(gym.Env):
 
         rad = rad.mean(dim=-1, keepdim=True) # grayscale
         rad = rad.clip(min=0, max=self.rad_max)
-        return rad, raw_img
-    
-    def update_img(self, raw_img, img_coords):
-        # accumulate results into the rightful pixels
-        # for i, batch in enumerate(img_coords):
-        #     for row in batch:
-        #         for x, y in row:
-        #             n = self.ray_counts[i, x, y]
-        #             self._img[i, x, y] = (self._img[i, x, y] * n + raw_img[i, x, y]) / (n + 1)
-        #             self.ray_counts[i, x, y] = n + 1
-        img_idx = torch.arange(img_coords.size(0), device=img_coords.device) \
-            .view(-1, 1, 1).expand_as(img_coords[..., 0]).flatten()
-        row_idx = img_coords[..., 0].flatten()
-        col_idx = img_coords[..., 1].flatten()
-
-        flat_idx = img_idx * self.rb.imsize + row_idx * self.rb.imshape[1] + col_idx
-
-        counts_up = self.ray_counts.flatten()
-
-        img_up = self._img.flatten() * counts_up
-        img_up.scatter_add_(dim=0, index=flat_idx, src=raw_img.flatten())
-
-        counts_up.scatter_add_(dim=0, index=flat_idx, src=torch.ones_like(counts_up))
-        img_up /= counts_up
-
-        self._img = img_up.view_as(self._img)
-        self.ray_counts = counts_up.view_as(self.ray_counts)
-    
-    def get_density(self):
-        return (
-            self._img / self._img.sum(dim=(-2, -1), keepdim=True)
-        ).cpu().numpy()
+        return rad, img
 
     def step(self, action):
         if self.with_penalty:
             directions = self.rb.directions.clone()
         # take step by moving rays
         self.rb.directions.copy_(action)
-        rad, _ = self.eval_model()
+        rad, img = self.eval_model()
         reward, penalty = self.reward_func(rad)
         above_thres = rad >= self.rad_thres
         done = above_thres.all().item()
         done_count = above_thres.sum().item()
         info = {
             'done': done_count / action.size(0),
-            'img': self.img,
+            'img': img if self.is_training else self.img,
         }
         # freeze ray when penalty > 0
         if self.with_penalty:
@@ -193,6 +167,44 @@ class NerfEnv(gym.Env):
 
         reward = ((rad - self.rad_thres) / self.rad_max - penalty) * self.reward_scale
         return reward, penalty
+    
+    def update_img(self, img):
+        # accumulate results into the rightful pixels
+        # for i, batch in enumerate(img_coords):
+        #     for row in batch:
+        #         for x, y in row:
+        #             n = self.ray_counts[i, x, y]
+        #             self._img[i, x, y] = (self._img[i, x, y] * n + raw_img[i, x, y]) / (n + 1)
+        #             self.ray_counts[i, x, y] = n + 1
+        if self.is_training:
+            return
+
+        img_coords = camera_to_image(
+            self.rb.directions, self.rb.camera_intrinsics
+        ).floor().int().view(self.rb.batch_size, *self.rb.imshape, -1)
+
+        img_idx = torch.arange(img_coords.size(0), device=img_coords.device) \
+            .view(-1, 1, 1).expand_as(img_coords[..., 0]).flatten()
+        row_idx = img_coords[..., 0].flatten()
+        col_idx = img_coords[..., 1].flatten()
+
+        flat_idx = img_idx * self.rb.imsize + row_idx * self.rb.imshape[1] + col_idx
+
+        counts_up = self.ray_counts.flatten()
+
+        img_up = self._img.flatten() * counts_up
+        img_up.scatter_add_(dim=0, index=flat_idx, src=img.flatten())
+
+        counts_up.scatter_add_(dim=0, index=flat_idx, src=torch.ones_like(counts_up))
+        img_up /= counts_up
+
+        self._img = img_up.view_as(self._img)
+        self.ray_counts = counts_up.view_as(self.ray_counts)
+    
+    def get_density(self):
+        return (
+            self._img / self._img.sum(dim=(-2, -1), keepdim=True)
+        ).cpu().numpy()
     
     def eval_actions(self, actions):
         """Compute radiance resulting from the given set of actions"""

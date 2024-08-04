@@ -82,7 +82,7 @@ class Runner:
                         results = []
                     results.append(res)
         except KeyboardInterrupt:
-            pass
+            loader.reset()
         if self.tensorboard:
             self.writer.close()
         return results
@@ -175,6 +175,6 @@ class Runner:
         self.agent.is_training = False
         self.agent.eval()
 
-        policy = lambda s: self.agent.select_action(s, decay_eps=False)
+        policy = lambda s: self.agent.select_action(s)
         results = self.evaluator(policy, batch_idx)
         return results

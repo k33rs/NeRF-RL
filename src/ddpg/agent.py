@@ -80,7 +80,7 @@ class Agent:
         )
         return next_dir
 
-    def select_action(self, state, decay_eps=True):
+    def select_action(self, state):
         """select next action by policy and clip it"""
         initial_dir = self.initial_state[..., -self.action_dim:]
         curr_dir = state[..., -self.action_dim:]
@@ -92,6 +92,8 @@ class Agent:
                 angle_rad=max(self.eps, 0) * self.clip_angle_small,
                 angle_sample='normal',
             )
+            # decay epsilon
+            self.eps -= self.eps_decay
         # clip w.r.t. old direction
         next_dir = clip_to_angle(
             dir=next_dir,
@@ -105,8 +107,7 @@ class Agent:
             self.camera_intrinsics,
             self.imshape,
         )
-        if decay_eps:
-            self.eps -= self.eps_decay
+
         return next_dir
     
     def observe(self, state, action, reward, done):
